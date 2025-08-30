@@ -1,16 +1,21 @@
 'use client';
 
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { Todo } from '@/types';
+import useSWR, { mutate } from 'swr';
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 interface TodoContextType {
   todos: Todo[];
   filteredTodos: Todo[];
+  isLoading: boolean;
+  error: any;
   getTodoById: (id: number) => Todo | undefined;
-  addTodo: (todo: Omit<Todo, 'id' | 'completed'>) => void;
-  updateTodo: (id: number, todo: Partial<Omit<Todo, 'id'>>) => void;
-  deleteTodo: (id: number) => void;
-  toggleTodo: (id: number) => void;
+  addTodo: (todo: Omit<Todo, 'id' | 'completed'>) => Promise<void>;
+  updateTodo: (id: number, todo: Partial<Omit<Todo, 'id'>>) => Promise<void>;
+  deleteTodo: (id: number) => Promise<void>;
+  toggleTodo: (id: number) => Promise<void>;
   searchTodos: (query: string) => void;
 }
 
@@ -25,54 +30,59 @@ export const useTodos = () => {
 };
 
 export const TodoProvider = ({ children }: { children: ReactNode }) => {
-  const [todos, setTodos] = useState<Todo[]>([
-    { id: 1, title: 'Next.jsの学習', content: 'App Routerを理解する', completed: false },
-    { id: 2, title: 'Tailwind CSSの練習', content: 'レスポンシブデザインを実装する', completed: true },
-    { id: 3, title: 'TODOアプリの作成', content: '詳細ページと編集機能を追加する', completed: false },
-  ]);
-  const [filteredTodos, setFilteredTodos] = useState<Todo[]>(todos);
+  const { data: todos, error, isLoading } = useSWR<Todo[]>('/api/todos', fetcher);
+  const [filteredTodos, setFilteredTodos] = useState<Todo[]>([]);
+
+  useEffect(() => {
+    if (todos) {
+      setFilteredTodos(todos);
+    }
+  }, [todos]);
 
   const getTodoById = (id: number) => {
-    return todos.find((todo) => todo.id === id);
+    return todos?.find((todo) => todo.id === id);
   };
 
-  const addTodo = (todo: Omit<Todo, 'id' | 'completed'>) => {
-    const newTodo = { ...todo, id: Date.now(), completed: false };
-    const newTodos = [...todos, newTodo];
-    setTodos(newTodos);
-    setFilteredTodos(newTodos);
+  const addTodo = async (todo: Omit<Todo, 'id' | 'completed'>) => {
+    await fetch('/api/todos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(todo),
+    });
+    mutate('/api/todos');
   };
 
-  const updateTodo = (id: number, updatedTodo: Partial<Omit<Todo, 'id'>>) => {
-    const newTodos = todos.map((todo) =>
-      todo.id === id ? { ...todo, ...updatedTodo } : todo
+  const updateTodo = async (id: number, updatedTodo: Partial<Omit<Todo, 'id'>>) => {
+    await fetch(`/api/todos/${id}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedTodo),
+      }
     );
-    setTodos(newTodos);
-    setFilteredTodos(newTodos);
+    mutate('/api/todos');
   };
 
-  const deleteTodo = (id: number) => {
-    const newTodos = todos.filter((todo) => todo.id !== id);
-    setTodos(newTodos);
-    setFilteredTodos(newTodos);
+  const deleteTodo = async (id: number) => {
+    await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+    mutate('/api/todos');
   };
 
-  const toggleTodo = (id: number) => {
-    const newTodos = todos.map((todo) =>
-      todo.id === id ? { ...todo, completed: !todo.completed } : todo
-    );
-    setTodos(newTodos);
-    setFilteredTodos(newTodos);
+  const toggleTodo = async (id: number) => {
+    const todo = todos?.find(t => t.id === id);
+    if (!todo) return;
+    await updateTodo(id, { completed: !todo.completed });
   };
 
   const searchTodos = (query: string) => {
+    if (!todos) return;
     if (!query) {
       setFilteredTodos(todos);
     } else {
       const results = todos.filter(
         (todo) =>
           todo.title.toLowerCase().includes(query.toLowerCase()) ||
-          todo.content.toLowerCase().includes(query.toLowerCase())
+          (todo.content && todo.content.toLowerCase().includes(query.toLowerCase()))
       );
       setFilteredTodos(results);
     }
@@ -81,8 +91,10 @@ export const TodoProvider = ({ children }: { children: ReactNode }) => {
   return (
     <TodoContext.Provider
       value={{
-        todos,
+        todos: todos || [],
         filteredTodos,
+        isLoading,
+        error,
         getTodoById,
         addTodo,
         updateTodo,
